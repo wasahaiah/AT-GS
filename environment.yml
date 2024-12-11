@@ -1,0 +1,34 @@
+name: AT-GS
+channels:
+  - pytorch3d
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - numpy=1.26.4
+  - cudatoolkit=11.8
+  - plyfile
+  - python=3.10
+  - pip
+  - pytorch=2.3.1
+  - torchaudio=2.3.1
+  - torchvision=0.18.1
+  - pytorch-cuda=11.8
+  - pytorch3d=0.7.7
+  - tqdm
+  - trimesh
+  - pip:
+    - pymeshlab
+    - opencv-python
+    - matplotlib
+    - imageio
+    - scikit-image
+    - json5
+    - open3d==0.18.0
+    - submodules/simple-knn
+    - submodules/diff-gaussian-rasterization
+    - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+
+    # pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch 
+    # pip install submodules/diff-gaussian-rasterization

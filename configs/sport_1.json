@@ -1,0 +1,9 @@
+{
+  "source_path": "dataset/NHR/sport_1", 
+  "output_path": "output/sport_1",
+  "frame_start": 0, // 0-based index, inclusive
+  "frame_end": 150, // 0-based index, not inclusive
+  "resolution": 1, 
+  "eval": false,
+  "sh_degree": 1
+}
