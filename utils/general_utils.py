@@ -281,44 +281,6 @@ def remove_vertex_colors(obj_path):
                     line = ' '.join(parts[:4]) + '\n'
             outfile.write(line)
 
-def fix_mesh_for_igl(obj_path):
-    """
-    Load a mesh from obj_path, clean and triangulate it, 
-    and save to obj_path. The resulting mesh is more likely 
-    to have correct face-edge relationships and pass igl assertions.
-    """
-    # Load mesh. Set process=False to avoid automatic fixes by trimesh,
-    #    so we can manually control the cleanup steps.
-    mesh = trimesh.load(obj_path)#, process=False)
-    
-    # Triangulate if the mesh is not already purely triangular
-    #    (igl assumes triangular faces in F, E, etc.)
-    if any(len(face) != 3 for face in mesh.faces):
-        mesh = mesh.triangulate()
-
-    # Optional: If you'd like to ensure the mesh is manifold and watertight:
-    mesh = mesh.split(only_watertight=False)[0]
-
-    # Fix mesh issues
-    mesh.process(validate=True)    
-    
-    mesh.fill_holes()    
-    # Ensure consistent face winding
-    mesh.fix_normals()    
-    
-    # Final cleanup
-    # Remove duplicate vertices
-    mesh.merge_vertices()
-    mesh.remove_duplicate_faces()
-    mesh.remove_unreferenced_vertices()
-    # Remove degenerate (zero-area) faces which can cause bad adjacency info
-    mesh.remove_degenerate_faces()
-    mesh.fix_normals()
-    
-    # Export the cleaned, triangulated mesh
-    mesh.export(obj_path, include_normals=True, include_color=False)
-    print(f"Exported fixed mesh to {obj_path}")
-
 def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False, n_faces=None, smooth_iter=5):
     print('Poisson meshing')
     if hhi: mesh_path = mesh_path.replace('.ply', '.obj')
@@ -398,31 +360,11 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
         # remove connected components having diameter less than p% of the diameter of the entire mesh
         p = pymeshlab.PercentageValue(30)
         ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=p)
-        
-        # # 1. Remove duplicates and degenerate geometry
-        # ms.apply_filter("meshing_remove_duplicate_vertices")
-        # ms.apply_filter("meshing_remove_duplicate_faces")
-        # ms.apply_filter("meshing_remove_null_faces")
-        # # 2. Repair non-manifold edges or vertices
-        # ms.apply_filter("meshing_repair_non_manifold_edges")
-        # ms.apply_filter("meshing_repair_non_manifold_vertices")
-        # # 3. Remove unreferenced vertices
-        # ms.apply_filter("meshing_remove_unreferenced_vertices")
-        # # # 4. (Optional) Merge extremely close vertices if needed
-        # # ms.apply_filter("meshing_merge_close_vertices", threshold=1e-6)
-        # # 5. Re-orient faces to have a coherent winding (optional, but often helpful)
-        # ms.apply_filter("meshing_re_orient_faces_coherently")
-        
+                
         ms.save_current_mesh(mesh_path)
 
-        # # Remove vertex colors if they exist using open3d
-        # mesh = o3d.io.read_triangle_mesh(mesh_path)
-        # if mesh.has_vertex_colors():
-        #     mesh.vertex_colors = o3d.utility.Vector3dVector()
-        #     o3d.io.write_triangle_mesh(mesh_path, mesh)
         remove_vertex_colors(mesh_path)
         
-        # fix_mesh_for_igl(mesh_path)
 
     else: # use open3d
         color_np = np.ones_like(vtx_np) * 0.8
