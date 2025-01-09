@@ -19,6 +19,8 @@ from tqdm import tqdm
 import open3d as o3d
 import os
 import re
+import trimesh
+
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -170,7 +172,7 @@ def normal2rotation(n):
     # exit()
     return q
 
-@torch.compile()
+# @torch.compile()
 def quaternion_multiply(a, b):
     """
     Multiply two sets of quaternions.
@@ -195,7 +197,7 @@ def quaternion_multiply(a, b):
     # result is normalized
     return torch.stack([w, x, y, z], dim=1) 
 
-@torch.compile()
+# @torch.compile()
 def quaternion2rotmat(q):
     r, x, y, z = q.split(1, -1)
     # R = torch.eye(4).expand([len(q), 4, 4]).to(q.device)
@@ -206,7 +208,7 @@ def quaternion2rotmat(q):
     ], -1).reshape([len(q), 3, 3]);
     return R
 
-@torch.compile()
+# @torch.compile()
 def rotmat2quaternion(R, normalize=False):
     tr = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2] + 1e-6
     r = torch.sqrt(1 + tr) / 2
@@ -261,50 +263,181 @@ def compute_obb(vertices):
     
     return center, rotation, min_coords, max_coords
 
-def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False, n_faces=None):
+def remove_vertex_colors(obj_path):
+    """
+    Read an OBJ file, remove all vertex colors, and overwrite the same file.
+
+    :param obj_path: Path to the OBJ file to be modified.
+    """
+    with open(obj_path, 'r') as infile:
+        lines = infile.readlines()
+
+    with open(obj_path, 'w') as outfile:
+        for line in lines:
+            if line.startswith('v '):
+                # Remove vertex colors from lines starting with 'v '
+                parts = line.split()
+                if len(parts) > 4:  # Assume extra values are vertex colors
+                    line = ' '.join(parts[:4]) + '\n'
+            outfile.write(line)
+
+def fix_mesh_for_igl(obj_path):
+    """
+    Load a mesh from obj_path, clean and triangulate it, 
+    and save to obj_path. The resulting mesh is more likely 
+    to have correct face-edge relationships and pass igl assertions.
+    """
+    # Load mesh. Set process=False to avoid automatic fixes by trimesh,
+    #    so we can manually control the cleanup steps.
+    mesh = trimesh.load(obj_path)#, process=False)
+    
+    # Triangulate if the mesh is not already purely triangular
+    #    (igl assumes triangular faces in F, E, etc.)
+    if any(len(face) != 3 for face in mesh.faces):
+        mesh = mesh.triangulate()
+
+    # Optional: If you'd like to ensure the mesh is manifold and watertight:
+    mesh = mesh.split(only_watertight=False)[0]
+
+    # Fix mesh issues
+    mesh.process(validate=True)    
+    
+    mesh.fill_holes()    
+    # Ensure consistent face winding
+    mesh.fix_normals()    
+    
+    # Final cleanup
+    # Remove duplicate vertices
+    mesh.merge_vertices()
+    mesh.remove_duplicate_faces()
+    mesh.remove_unreferenced_vertices()
+    # Remove degenerate (zero-area) faces which can cause bad adjacency info
+    mesh.remove_degenerate_faces()
+    mesh.fix_normals()
+    
+    # Export the cleaned, triangulated mesh
+    mesh.export(obj_path, include_normals=True, include_color=False)
+    print(f"Exported fixed mesh to {obj_path}")
+
+def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False, n_faces=None, smooth_iter=5):
     print('Poisson meshing')
     if hhi: mesh_path = mesh_path.replace('.ply', '.obj')
 
     vtx_np = vtx.cpu().numpy()
     if hhi: vtx_np = vtx_np * 1000
     normal_np = normal.cpu().numpy()
-    color_np = np.ones_like(vtx_np) * 0.8
-
-    center, rotation, min_coords, max_coords = compute_obb(vtx_np)
 
     # poisson recon
-    if use_pymeshlab or hhi:
+    if use_pymeshlab or hhi:                
+        from scipy.spatial import ConvexHull, Delaunay
+        import alphashape
+        from shapely.geometry import Point, Polygon
+        # Step 1: Filter out points where y < 0
+        filtered_indices = vtx_np[:, 1] >= 0
+        filtered_points = vtx_np[filtered_indices]
+        filtered_normals = normal_np[filtered_indices]
+
+        # Step 2: Project the bottom points onto the y = 0 plane
+        bottom_points = filtered_points[filtered_points[:, 1] < 5] # 5mm above the floor
+        projected_points = bottom_points[:, [0, 2]]  # Only x and z coordinates
+
+        # Step 3A: Find the 2D convex hull
+        hull = ConvexHull(projected_points)
+        hull_vertices = projected_points[hull.vertices]
+
+        # Step 4: Generate a dense grid of points inside the hull
+        # Define a grid bounding box
+        x_min, x_max = projected_points[:, 0].min(), projected_points[:, 0].max()
+        z_min, z_max = projected_points[:, 1].min(), projected_points[:, 1].max()
+        # Create a grid of points
+        grid_density = 300  # Adjust for more/less dense grid
+        x_grid, z_grid = np.meshgrid(
+            np.linspace(x_min, x_max, grid_density),
+            np.linspace(z_min, z_max, grid_density)
+        )
+        grid_points = np.vstack((x_grid.ravel(), z_grid.ravel())).T
+
+        # 4A: Delaunay + find_simplex
+        # Create a Delaunay triangulation of the hull vertices
+        tri = Delaunay(hull_vertices)
+        # Retain points inside the convex hull
+        inside_hull = tri.find_simplex(grid_points) >= 0
+        floor_points = grid_points[inside_hull]
+
+        # Step 5: Add the y coordinate and ensure proper xyz order
+        floor_points_3d = np.hstack((
+            floor_points[:, [0]], 
+            np.ones((floor_points.shape[0], 1)) * (-5),  # y = -5mm
+            floor_points[:, [1]]
+        ))
+
+        # Step 6: Assign normals for the floor points
+        floor_normals = np.tile([0, -1, 0], (floor_points_3d.shape[0], 1))  # Normals point in -y
+
+        # Step 7: Combine the filtered points and normals with the floor points and normals
+        updated_points = np.vstack((filtered_points, floor_points_3d))
+        updated_normals = np.vstack((filtered_normals, floor_normals))
+
+        # # save the pcd to ply files
+        # pcd = o3d.geometry.PointCloud()
+        # pcd.points = o3d.utility.Vector3dVector(filtered_points.astype(np.float64))
+        # pcd.normals = o3d.utility.Vector3dVector(filtered_normals.astype(np.float64))
+        # pcd_path = mesh_path.replace('.obj', '_filtered.ply')
+        # o3d.io.write_point_cloud(pcd_path, pcd)
+        # pcd.points = o3d.utility.Vector3dVector(floor_points_3d.astype(np.float64))
+        # pcd.normals = o3d.utility.Vector3dVector(floor_normals.astype(np.float64))
+        # pcd_path = mesh_path.replace('.obj', '_floor.ply')
+        # o3d.io.write_point_cloud(pcd_path, pcd)
+
         ms = pymeshlab.MeshSet()
-        pts = pymeshlab.Mesh(vtx_np, [], normal_np)
-        ms.add_mesh(pts)
-        ms.generate_surface_reconstruction_screened_poisson(depth=depth, threads=os.cpu_count() // 2, preclean=True, samplespernode=1.5)
+        pts = pymeshlab.Mesh(updated_points, [], updated_normals)
+        ms.add_mesh(pts)      
+        ms.generate_surface_reconstruction_screened_poisson(depth=depth, threads=os.cpu_count() // 2, preclean=True, samplespernode=15)
         if n_faces: ms.meshing_decimation_quadric_edge_collapse(targetfacenum = n_faces)
+        
+        # remove connected components having diameter less than p% of the diameter of the entire mesh
         p = pymeshlab.PercentageValue(30)
         ms.meshing_remove_connected_component_by_diameter(mincomponentdiag=p)
-        ms.save_current_mesh(mesh_path)    
+        
+        # # 1. Remove duplicates and degenerate geometry
+        # ms.apply_filter("meshing_remove_duplicate_vertices")
+        # ms.apply_filter("meshing_remove_duplicate_faces")
+        # ms.apply_filter("meshing_remove_null_faces")
+        # # 2. Repair non-manifold edges or vertices
+        # ms.apply_filter("meshing_repair_non_manifold_edges")
+        # ms.apply_filter("meshing_repair_non_manifold_vertices")
+        # # 3. Remove unreferenced vertices
+        # ms.apply_filter("meshing_remove_unreferenced_vertices")
+        # # # 4. (Optional) Merge extremely close vertices if needed
+        # # ms.apply_filter("meshing_merge_close_vertices", threshold=1e-6)
+        # # 5. Re-orient faces to have a coherent winding (optional, but often helpful)
+        # ms.apply_filter("meshing_re_orient_faces_coherently")
+        
+        ms.save_current_mesh(mesh_path)
+
+        # # Remove vertex colors if they exist using open3d
+        # mesh = o3d.io.read_triangle_mesh(mesh_path)
+        # if mesh.has_vertex_colors():
+        #     mesh.vertex_colors = o3d.utility.Vector3dVector()
+        #     o3d.io.write_triangle_mesh(mesh_path, mesh)
+        remove_vertex_colors(mesh_path)
+        
+        # fix_mesh_for_igl(mesh_path)
+
     else: # use open3d
+        color_np = np.ones_like(vtx_np) * 0.8
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(vtx_np.astype(np.float64))
         pcd.normals = o3d.utility.Vector3dVector(normal_np.astype(np.float64))
         pcd.colors = o3d.utility.Vector3dVector(color_np.astype(np.float64))
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=depth,n_threads=os.cpu_count() // 2)
-        o3d.io.write_triangle_mesh(mesh_path, mesh)
+        
+        # o3d.io.write_triangle_mesh(mesh_path, mesh)        
+        # print('Mesh cleaning')
+        # mesh = o3d.io.read_triangle_mesh(mesh_path)
 
-    
-    print('Mesh cleaning')
-    mesh = o3d.io.read_triangle_mesh(mesh_path)
-
-    # cut vertices below the floor
-    if hhi:
-        bbox_min = np.array([-1e9, 0, -1e9])  # Minimum coordinates of the bounding box
-        bbox_max = np.array([1e9, 1e9, 1e9])  # Maximum coordinates of the bounding box
-        vertices = np.asarray(mesh.vertices)
-        mask = np.invert(np.all((vertices >= bbox_min) & (vertices <= bbox_max), axis=1))
-        mesh.remove_vertices_by_mask(mask)        
-        if mesh.has_vertex_colors():
-            mesh.vertex_colors = o3d.utility.Vector3dVector([])
-    else: 
         # Apply the OBB to the mesh
+        center, rotation, min_coords, max_coords = compute_obb(vtx_np)
         mesh_vertices = np.asarray(mesh.vertices)
         vertices_centered = mesh_vertices - center
         vertices_transformed = vertices_centered @ rotation
@@ -319,24 +452,24 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
         )
         mesh.remove_vertices_by_mask(~is_inside) 
 
-    # only keep largest cluster
-    if True:
-        triangle_clusters, cluster_n_triangles, cluster_area = (mesh.cluster_connected_triangles())
-        triangle_clusters = np.asarray(triangle_clusters)
-        cluster_n_triangles = np.asarray(cluster_n_triangles)
-        cluster_area = np.asarray(cluster_area)
-        largest_cluster_idx = cluster_n_triangles.argmax()
-        triangles_to_remove = triangle_clusters != largest_cluster_idx
-        mesh.remove_triangles_by_mask(triangles_to_remove)
+        # only keep largest cluster
+        if True:
+            triangle_clusters, cluster_n_triangles, cluster_area = (mesh.cluster_connected_triangles())
+            triangle_clusters = np.asarray(triangle_clusters)
+            cluster_n_triangles = np.asarray(cluster_n_triangles)
+            cluster_area = np.asarray(cluster_area)
+            largest_cluster_idx = cluster_n_triangles.argmax()
+            triangles_to_remove = triangle_clusters != largest_cluster_idx
+            mesh.remove_triangles_by_mask(triangles_to_remove)
 
-    mesh.remove_duplicated_vertices()
-    mesh.remove_degenerate_triangles()
-    mesh.remove_duplicated_triangles()
-    mesh.remove_non_manifold_edges()
-    mesh.remove_unreferenced_vertices()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_non_manifold_edges()
+        mesh.remove_unreferenced_vertices()
 
-    o3d.io.write_triangle_mesh(mesh_path, mesh)
-    
+        o3d.io.write_triangle_mesh(mesh_path, mesh)
+        
 
 def find_min_numbered_subfolder(folder_path):
     # Regular expression to match subfolders with the pattern xxxx_(d+)

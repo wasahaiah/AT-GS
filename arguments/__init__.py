@@ -65,7 +65,7 @@ class ModelParams(ParamGroup):
         self._use_mask = 1
         self.normalize_depth = True
         self.perpix_depth = True
-        self.mono_normal = True
+        self.mono_normal = False
 
         self.unified_densification = True
         super().__init__(parser, "Loading Parameters", sentinel)
@@ -110,6 +110,8 @@ class OptimizationParams(ParamGroup):
         self.ntc_conf_path = "configs/cache/cache_F_4.json"
         self.ntc_path = 'models/ntc.pth'
         self.only_mlp = False
+
+        self.lambda_smooth = 0
         
         super().__init__(parser, "Optimization Parameters")
 

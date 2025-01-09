@@ -149,6 +149,15 @@ if __name__ == "__main__":
         start_time = time.time()
         args.source_path = os.path.join(source_path, dict_out_sub_dirs[frame_id]) 
         args.model_path = os.path.join(args.output_path, dict_out_sub_dirs[frame_id])
+
+        if False:
+            # skip if the mesh of this frame already exists
+            obj_path = os.path.join(args.model_path, "..", "meshes", f"Frame_{frame_id:06d}.obj")
+            ply_path = os.path.join(args.model_path, "..", "meshes", f"Frame_{frame_id:06d}.ply")
+            if os.path.exists(obj_path) or os.path.exists(ply_path):
+                print(f"Frame {frame_id} already exists.")
+                continue
+
         print("Rendering " + args.model_path)
         render_sets(model.extract(args), -1, pipeline.extract(args), args.skip_train, args.skip_test, args.img, args.poisson_depth, 
                     frame_id = frame_id)

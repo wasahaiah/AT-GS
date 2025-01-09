@@ -101,13 +101,11 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image=Image.open(image_path)
         
-        # try:
-        #     mono = read_monoData(f'{images_folder}/../normal/{image_name}_normal.npy')
-        #     # mono = read_monoData(f'{images_folder}/../normal_dsine/{image_name}_normal.npy')
-        #     # mono = np.transpose(mono, (2, 0, 1))
-        # except FileNotFoundError:
-        #     mono = None
-        mono = None
+        try:
+            # mono = read_monoData(f'{images_folder}/../normal/{image_name}_normal.npy')
+            mono = read_monoData(f'{images_folder}/../dsine/{image_name}_normal.npy')
+        except FileNotFoundError:
+            mono = None
 
         try:
             mask = load_mask(f'{images_folder}/../masks/{image_name}.png')[None]

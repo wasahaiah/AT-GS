@@ -13,7 +13,7 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, compute_curvature, erode_mask
+from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, compute_curvature, erode_mask, normal2curv
 from torchvision.utils import save_image
 import torch.nn.functional as F
 from utils.debug_utils import save_tensor_img
@@ -169,6 +169,12 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
             loss += (0.01 + 0.1 * min(2 * iteration / total_iter, 1)) * loss_surface    
             loss_dict["loss_surface"] = (0.01 + 0.1 * min(2 * iteration / total_iter, 1)) * loss_surface
 
+            # spatial smoothness
+            if opt.lambda_smooth > 0:
+                curv_n = normal2curv(normal, mask_vis)
+                loss_dict["loss_spatial_sm"] = l1_loss(curv_n * 1, 0) * 0.005 * opt.lambda_smooth
+                loss += l1_loss(curv_n * 1, 0) * 0.005 * opt.lambda_smooth
+
             if mono is not None:
                 loss_monoN = cos_loss(normal, monoN, weight=mask_gt)
                 loss += (0.04 - ((iteration / total_iter)) * 0.03) * loss_monoN
@@ -185,20 +191,9 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
                 loss_n_coher = F.mse_loss(curv_rendered[mask_n>0], curv_warped[mask_n>0]) * args.l_coh
                 loss += (0.04 - ((iteration / total_iter)) * 0.02) * loss_n_coher
                 loss_dict["loss_n_coher"] = (0.04 - ((iteration / total_iter)) * 0.02) * loss_n_coher
-
-                # # d2n vs. wapped normal consistency
-                # # mask_n = mask_n.expand_as(d2n)
-                # dot = args.warped_normals[f'{viewpoint_cam.image_name}'] * d2n # 3HW
-                # dot = (torch.sum(dot, 0, keepdim=True)) # 1HW
-                # dot = dot[mask_n>0] 
-                # loss_surface2 = (1 - dot.mean()) / 100
-                # loss += (0.04 - ((iteration / total_iter)) * 0.03) * loss_surface2
-                # loss_dict["loss_surface2"] = (0.04 - ((iteration / total_iter)) * 0.03) * loss_surface2
                 
-        loss_dict["total_loss"] = loss
-        
+        loss_dict["total_loss"] = loss        
         loss.backward()
-
         iter_end.record()
 
         with torch.no_grad():

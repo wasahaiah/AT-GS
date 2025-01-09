@@ -67,7 +67,7 @@ def normal2rgb(normal, mask, background=None):
     return normal_draw
 
 def depth2normal(depth, mask, camera):
-    # conver to camera position
+    # convert to camera position
     camD = depth.permute([1, 2, 0])
     mask = mask.permute([1, 2, 0])
     shape = camD.shape

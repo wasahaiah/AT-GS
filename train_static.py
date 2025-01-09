@@ -11,7 +11,7 @@ import json5
 from scene import Scene, GaussianModel
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, resize_image
+from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, resize_image, normal2curv
 from torchvision.utils import save_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
@@ -79,6 +79,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         mask_vis = (opac.detach() > 1e-5) # rendered_mask
         normal = torch.nn.functional.normalize(normal, dim=0) * mask_vis
         d2n = depth2normal(depth, mask_vis, viewpoint_cam)
+        mono = viewpoint_cam.mono if dataset.mono_normal else None
+        if mono is not None:
+            mono *= mask_gt
+            monoN = mono[:3]
 
         # Loss
         Ll1 = l1_loss(image, gt_image)
@@ -99,7 +103,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = 1 * loss_rgb
         loss += 0.1 * loss_mask
         loss += 0.01 * loss_opac
-
         loss += (0.01 + 0.1 * min(2 * iteration / opt.iterations, 1)) * loss_surface   
 
         loss_dict = {
@@ -109,6 +112,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             "loss_opac": loss_opac * 0.01,
             "loss_surface": (0.01 + 0.1 * min(2 * iteration / opt.iterations, 1)) * loss_surface
         }
+
+        if opt.lambda_smooth > 0:
+            curv_n = normal2curv(normal, mask_vis)
+            loss_curv = l1_loss(curv_n * 1, 0) * 0.005 * opt.lambda_smooth
+            loss += loss_curv
+
+        if mono is not None:
+            loss_monoN = cos_loss(normal, monoN, weight=mask_gt)
+            loss += (0.04 - ((iteration / opt.iterations)) * 0.02) * loss_monoN
 
         loss.backward()
 
@@ -242,9 +254,8 @@ if __name__ == "__main__":
             setattr(args, key, value)
 
     args.save_iterations.append(args.iterations)
-    args.source_path = find_min_numbered_subfolder(args.source_path)
+    args.source_path = os.path.join(args.source_path, f'frame_{args.frame_start}')
     args.output_path = os.path.join(args.output_path, os.path.basename(args.source_path))
-    
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 

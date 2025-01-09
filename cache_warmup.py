@@ -38,7 +38,7 @@ def get_contracted_xyz(xyz):
     normalzied_xyz=(xyz-xyz_bound_min)/(xyz_bound_max-xyz_bound_min)
     return normalzied_xyz
 
-@torch.compile
+# @torch.compile
 def quaternion_multiply(a, b):
     a_norm=nn.functional.normalize(a)
     b_norm=nn.functional.normalize(b)
