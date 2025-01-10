@@ -85,7 +85,7 @@ def strip_lowerdiag(L):
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
 
-# @torch.compile
+@torch.compile
 def build_rotation(r):
     q = torch.nn.functional.normalize(r)
 
@@ -172,7 +172,7 @@ def normal2rotation(n):
     # exit()
     return q
 
-# @torch.compile()
+@torch.compile()
 def quaternion_multiply(a, b):
     """
     Multiply two sets of quaternions.
@@ -197,7 +197,7 @@ def quaternion_multiply(a, b):
     # result is normalized
     return torch.stack([w, x, y, z], dim=1) 
 
-# @torch.compile()
+@torch.compile()
 def quaternion2rotmat(q):
     r, x, y, z = q.split(1, -1)
     # R = torch.eye(4).expand([len(q), 4, 4]).to(q.device)
@@ -208,7 +208,7 @@ def quaternion2rotmat(q):
     ], -1).reshape([len(q), 3, 3]);
     return R
 
-# @torch.compile()
+@torch.compile()
 def rotmat2quaternion(R, normalize=False):
     tr = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2] + 1e-6
     r = torch.sqrt(1 + tr) / 2
@@ -463,3 +463,12 @@ def get_min_max_subfolder_numbers(directory_path):
                 max_number = number
     
     return min_number, max_number
+
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        assert False

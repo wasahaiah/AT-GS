@@ -13,13 +13,13 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, compute_curvature, erode_mask, normal2curv
+from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, masked_psnr, compute_curvature, erode_mask, normal2curv, resample_points, grid_prune
 from torchvision.utils import save_image
 import torch.nn.functional as F
 from utils.debug_utils import save_tensor_img
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from utils.general_utils import get_min_max_subfolder_numbers
+from utils.general_utils import get_min_max_subfolder_numbers, str2bool, poisson_mesh
 import re
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -344,7 +344,43 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
                         save_image(depth_wrt.cpu(), os.path.join(args.output_path, f'rendered_depths/{view.image_name}.png'))
 
             args.normals_rendered = True
-           
+
+    if args.output_mesh:
+        with torch.no_grad():
+            poisson_depth = 9
+            grid_dim = 512 
+            occ_grid, grid_shift, grid_scale, grid_dim = gaussians.to_occ_grid(0.0, grid_dim, None)
+
+            resampled = []
+            # loop through all cams
+            for idx, view in enumerate(tqdm(scene.getTrainCameras(1), desc="Rendering progress")):
+                render_pkg = render(view, gaussians, pipe, background)
+                image, normal, depth, opac, viewspace_point_tensor, visibility_filter, radii = \
+                    render_pkg["render"], render_pkg["normal"], render_pkg["depth"], render_pkg["opac"], \
+                    render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                
+                mask_gt = view.get_gtMask(use_mask)
+                gt_image = view.get_gtImage(background, use_mask).cuda()
+                mask_vis = (opac.detach() > 1e-1) #1e-5
+                depth_range = [0, 20]
+                mask_clip = (depth > depth_range[0]) * (depth < depth_range[1])
+                normal = torch.nn.functional.normalize(normal, dim=0) * mask_vis
+
+                # unproject filtered depth map to 3D points in world space
+                # [H, W, 9(xyz_in_world, normals, rgb)]
+                pts = resample_points(view, depth, normal, image, mask_vis * mask_gt * mask_clip)
+                # prune points by occupancy grid
+                grid_mask = grid_prune(occ_grid, grid_shift, grid_scale, grid_dim, pts[..., :3], thrsh=0)
+                pts = pts[grid_mask]
+                resampled.append(pts.cpu())
+
+            resampled = torch.cat(resampled, 0)
+            mesh_dir = os.path.join(args.output_path, "..", "meshes")
+            os.makedirs(mesh_dir, exist_ok=True)
+            mesh_path = os.path.join(mesh_dir, f"Frame_{args.frame_id:06d}.ply")
+            use_pymeshlab = True
+            poisson_mesh(mesh_path, resampled[:, :3], resampled[:, 3:6], resampled[:, 6:], poisson_depth, use_pymeshlab, args.hhi, args.n_faces)
+        
     return test_res, pre_time, frame_training_time
 
 # per-frame logger
@@ -433,7 +469,6 @@ def train_frames(lp, op, pp, args):
     safe_state(args.quiet)
     output_path=args.output_path # global
     source_path=args.source_path # global
-    input_path=args.source_path # per-frame
     sub_paths = os.listdir(source_path)
     tb_global = prepare_global_logger(args.output_global_path, lp)
     pattern = re.compile(r'frame_(\d+)')
@@ -445,13 +480,13 @@ def train_frames(lp, op, pp, args):
     print(f"Training from frame {args.frame_start}", f" to frame {args.frame_end-1}")
     for frame_id in range(args.frame_start+1, args.frame_end):
         print(f"Training frame {frame_id}")
+        args.frame_id = frame_id
         start_time = time.time()
-        args.source_path = os.path.join(source_path, dict_frame_dirs[frame_id])
-        args.output_path = os.path.join(output_path, dict_frame_dirs[frame_id])
-        args.model_path = os.path.join(output_path, dict_frame_dirs[frame_id-1])
+        args.source_path = os.path.join(source_path, dict_frame_dirs[frame_id]) # per-frame
+        args.output_path = os.path.join(output_path, dict_frame_dirs[frame_id]) # per-frame
+        args.model_path = os.path.join(output_path, dict_frame_dirs[frame_id-1]) # per-frame
         res_dict = train_one_frame(lp,op,pp,args)
         print(f"Frame {frame_id} finished in {time.time()-start_time} seconds.")
-        input_path = args.output_path
         if tb_global:
             tb_global.add_scalar('psnr_0', res_dict['psnr_0'], frame_id)
             tb_global.add_scalar('psnr_1', res_dict['psnr_1'], frame_id)
@@ -460,13 +495,6 @@ def train_frames(lp, op, pp, args):
             tb_global.add_scalar('points_num', res_dict['points_num_2'], frame_id)
         torch.cuda.empty_cache()
         
-def str2bool(v):
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        assert False
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -485,9 +513,12 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--config_path", type=str, default = None)
-    parser.add_argument("--optical_flow_normals", type=str2bool, default=True)
+    parser.add_argument("--optical_flow_normals", type=str, default=True)
     parser.add_argument('--l_coh', type=float, default=1.0)
-    parser.add_argument("--save_snapshot", action="store_true")   
+    parser.add_argument("--save_snapshot", action="store_true") 
+    parser.add_argument("--output_mesh", type=str, default="False")
+    parser.add_argument("--hhi", type=str, default="True")
+    parser.add_argument("--n_faces", type=int, default=None)
     args = parser.parse_args(sys.argv[1:])
 
     if args.config_path is not None:
@@ -496,6 +527,9 @@ if __name__ == "__main__":
         for key, value in config.items():
             setattr(args, key, value)
     args.optical_flow_normals = str2bool(args.optical_flow_normals)
+    args.mono_normal = str2bool(args.mono_normal)
+    args.output_mesh = str2bool(args.output_mesh)
+    args.hhi = str2bool(args.hhi)
     
     # resume training
     _, frame_done = get_min_max_subfolder_numbers(config["output_path"])

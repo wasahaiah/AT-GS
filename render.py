@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
-from utils.general_utils import safe_state, poisson_mesh
+from utils.general_utils import safe_state, poisson_mesh, str2bool
 from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, resample_points, mask_prune, grid_prune, depth2viewDir, img2video
 from argparse import ArgumentParser
 from torchvision.utils import save_image
@@ -124,8 +124,8 @@ if __name__ == "__main__":
     parser.add_argument("--occ_thrsh", default=0., type=float)
     parser.add_argument("--use_pymeshlab", type=bool, default=False)
     parser.add_argument("--out_img4eval", action="store_true")
-    parser.add_argument("--hhi", action="store_true")
     parser.add_argument("--n_faces", type=int, default=None)
+    parser.add_argument("--hhi", type=str, default="False")
 
     # args = get_combined_args(parser)
     args = parser.parse_args(sys.argv[1:])
@@ -134,6 +134,7 @@ if __name__ == "__main__":
             config = json5.load(f)
         for key, value in config.items():
             setattr(args, key, value)
+    args.hhi = str2bool(args.hhi)
     
     # Initialize system state (RNG)
     safe_state(args.quiet)

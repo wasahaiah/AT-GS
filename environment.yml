@@ -26,6 +26,7 @@ dependencies:
     - scikit-image
     - json5
     - open3d==0.18.0
+    - geffnet
     - submodules/simple-knn
     - submodules/diff-gaussian-rasterization
     - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
