@@ -2,8 +2,7 @@
 
 Official repository of the paper "Adaptive and Temporally Consistent Gaussian Surfels for Multi-view Dynamic Reconstruction".
 
-WACV 2025
-
+WACV 2025 Oral
 
 | [Project](https://fraunhoferhhi.github.io/AT-GS/) 
 | [arXiv](https://arxiv.org/abs/2411.06602) |
