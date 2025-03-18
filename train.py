@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from utils.debug_utils import save_tensor_img
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from utils.general_utils import get_min_max_subfolder_numbers, str2bool, poisson_mesh
+from utils.general_utils import get_max_subfolder_numbers_in_range, str2bool, poisson_mesh
 import re
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -523,11 +523,13 @@ if __name__ == "__main__":
     args.output_mesh = str2bool(args.output_mesh)
     args.hhi = str2bool(args.hhi)
     args.add_floor_pc = str2bool(args.add_floor_pc)
+    args.eval = str2bool(args.eval)
+    assert config["frame_end"] == args.frame_end
     
     # resume training
-    _, frame_done = get_min_max_subfolder_numbers(config["output_path"])
+    frame_done = get_max_subfolder_numbers_in_range(config["output_path"], args.frame_start, args.frame_end-1)
     if frame_done:
-        if (frame_done == config["frame_end"] - 1): exit()
+        # if (frame_done == config["frame_end"] - 1): exit()
         args.frame_start = max(frame_done -1, args.frame_start)
 
     # set other parameters:

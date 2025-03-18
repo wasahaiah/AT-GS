@@ -121,7 +121,8 @@ if __name__ == "__main__":
         ntc_optimizer.step()
         ntc_optimizer.zero_grad(set_to_none = True)
 
-    save_path='models/ntc.pth'
+    # save_path='models/ntc.pth'
+    save_path = config['ntc_path']
     ntc=NeuralTransformationCache(ntc,get_xyz_bound()[0],get_xyz_bound()[1])
     torch.save(ntc.state_dict(),save_path)
     print("NTC model saved at", save_path)

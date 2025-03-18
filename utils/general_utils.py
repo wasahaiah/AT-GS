@@ -281,7 +281,7 @@ def remove_vertex_colors(obj_path):
                     line = ' '.join(parts[:4]) + '\n'
             outfile.write(line)
 
-def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False, n_faces=None, smooth_iter=5, add_floor_pc=False):
+def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False, n_faces=None, add_floor_pc=False):
     print('Poisson meshing')
     if hhi: mesh_path = mesh_path.replace('.ply', '.obj')
 
@@ -299,8 +299,9 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
             
             if add_floor_pc:
                 # Step 2: Project the bottom points onto the y = floor_cut/min_y plane
-                min_y = vtx_np[:, 1].min()
-                bottom_points = vtx_np[vtx_np[:, 1] < min_y+5] # 5mm above the floor
+                # min_y = vtx_np[:, 1].min()
+                min_y = np.percentile(vtx_np[:, 1], 0.3) # 0.3%
+                bottom_points = vtx_np[vtx_np[:, 1] < min_y+10] # 10mm above the floor
                 projected_points = bottom_points[:, [0, 2]]  # Only x and z coordinates
 
                 # Step 3A: Find the 2D convex hull
@@ -330,7 +331,7 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
                 # Step 5: Add the y coordinate and ensure proper xyz order
                 floor_points_3d = np.hstack((
                     floor_points[:, [0]], 
-                    np.ones((floor_points.shape[0], 1)) * (-5),  # y = -5mm
+                    np.ones((floor_points.shape[0], 1)) * (0) + min_y,  # y = min_y
                     floor_points[:, [1]]
                 ))
 
@@ -340,17 +341,17 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
                 # Step 7: Combine the filtered points and normals with the floor points and normals
                 vtx_np = np.vstack((vtx_np, floor_points_3d))
                 normal_np = np.vstack((normal_np, floor_normals))
-            
-            # # save the pcd to ply files
-            # pcd = o3d.geometry.PointCloud()
-            # pcd.points = o3d.utility.Vector3dVector(vtx_np.astype(np.float64))
-            # pcd.normals = o3d.utility.Vector3dVector(normal_np.astype(np.float64))
-            # pcd_path = mesh_path.replace('.obj', '_filtered.ply')
-            # o3d.io.write_point_cloud(pcd_path, pcd)
-            # pcd.points = o3d.utility.Vector3dVector(floor_points_3d.astype(np.float64))
-            # pcd.normals = o3d.utility.Vector3dVector(floor_normals.astype(np.float64))
-            # pcd_path = mesh_path.replace('.obj', '_floor.ply')
-            # o3d.io.write_point_cloud(pcd_path, pcd)
+                
+                # # save the pcd to ply files
+                # pcd = o3d.geometry.PointCloud()
+                # pcd.points = o3d.utility.Vector3dVector(vtx_np.astype(np.float64))
+                # pcd.normals = o3d.utility.Vector3dVector(normal_np.astype(np.float64))
+                # pcd_path = mesh_path.replace('.obj', '_filtered.ply')
+                # o3d.io.write_point_cloud(pcd_path, pcd)
+                # pcd.points = o3d.utility.Vector3dVector(floor_points_3d.astype(np.float64))
+                # pcd.normals = o3d.utility.Vector3dVector(floor_normals.astype(np.float64))
+                # pcd_path = mesh_path.replace('.obj', '_floor.ply')
+                # o3d.io.write_point_cloud(pcd_path, pcd)
 
         ms = pymeshlab.MeshSet()
         pts = pymeshlab.Mesh(vtx_np, [], normal_np)
@@ -435,15 +436,7 @@ def find_min_numbered_subfolder(folder_path):
     return selected_subfolder
 
 
-def get_min_max_subfolder_numbers(directory_path):
-    """
-    Get the smallest and largest numbers from the subfolder names in the given directory.
-
-    :param directory_path: The path to the directory containing the subfolders.
-    :return: A tuple (min_number, max_number) with the smallest and largest numbers found,
-             or (None, None) if no valid subfolders are found.
-    """
-    min_number = None
+def get_max_subfolder_numbers_in_range(directory_path, range_min, range_max):
     max_number = None
     
     # Regex pattern to match folder names ending with a number
@@ -457,12 +450,10 @@ def get_min_max_subfolder_numbers(directory_path):
         match = pattern.search(subdir)
         if match:
             number = int(match.group(1))
-            if min_number is None or number < min_number:
-                min_number = number
-            if max_number is None or number > max_number:
+            if (max_number is None or number > max_number) and range_min <= number <= range_max:
                 max_number = number
     
-    return min_number, max_number
+    return max_number
 
 
 def str2bool(v):
