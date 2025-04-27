@@ -168,10 +168,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 torch.save((gaussians.capture(), iteration), scene.output_path + "/chkpnt" + str(iteration) + ".pth")
     
     if args.output_mesh:    
-# dataset.model_path, True, "train", scene.loaded_iter, scene.getTrainCameras(scales[0]), gaussians, pipeline, background, write_image, poisson_depth, frame_id
-# def create_mesh(model_path, use_mask, name, iteration, views, gaussians, pipeline, background, write_image, poisson_depth, frame_id):
         with torch.no_grad():
-            poisson_depth = 9
             grid_dim = 512 
             occ_grid, grid_shift, grid_scale, grid_dim = gaussians.to_occ_grid(0.0, grid_dim, None)
 
@@ -202,7 +199,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             mesh_dir = os.path.join(args.output_path, "..", "meshes")
             os.makedirs(mesh_dir, exist_ok=True)
             mesh_path = os.path.join(mesh_dir, f"Frame_{args.frame_start:06d}.ply")
-            poisson_mesh(mesh_path, resampled[:, :3], resampled[:, 3:6], resampled[:, 6:], poisson_depth, args.use_pymeshlab, args.hhi, args.n_faces, args.add_floor_pc)
+            poisson_mesh(mesh_path, resampled[:, :3], resampled[:, 3:6], resampled[:, 6:], args.poisson_depth, args.use_pymeshlab, args.hhi, args.n_faces, args.add_floor_pc)
 
 
 def prepare_output_and_logger(args):    
@@ -215,7 +212,7 @@ def prepare_output_and_logger(args):
     if TENSORBOARD_FOUND:
         tb_writer = SummaryWriter(args.output_path)
     else:
-        print("Tensorboard not available: not logging progress")
+        print("No tensorboard logging")
     return tb_writer
 
 def training_report(tb_writer, iteration, loss_dict, l1_loss, elapsed, testing_iterations, scene : Scene, pipe, bg, use_mask):
@@ -281,6 +278,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--config_path", type=str, default = None)
+    parser.add_argument("--poisson_depth", type=int, default=9)
     args = parser.parse_args(sys.argv[1:])
     
     if args.config_path is not None:

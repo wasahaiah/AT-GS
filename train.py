@@ -345,7 +345,6 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
 
     if args.output_mesh:
         with torch.no_grad():
-            poisson_depth = 9
             grid_dim = 512 
             occ_grid, grid_shift, grid_scale, grid_dim = gaussians.to_occ_grid(0.0, grid_dim, None)
 
@@ -376,7 +375,7 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
             mesh_dir = os.path.join(args.output_path, "..", "meshes")
             os.makedirs(mesh_dir, exist_ok=True)
             mesh_path = os.path.join(mesh_dir, f"Frame_{args.frame_id:06d}.ply")
-            poisson_mesh(mesh_path, resampled[:, :3], resampled[:, 3:6], resampled[:, 6:], poisson_depth, args.use_pymeshlab, args.hhi, args.n_faces, args.add_floor_pc)
+            poisson_mesh(mesh_path, resampled[:, :3], resampled[:, 3:6], resampled[:, 6:], args.poisson_depth, args.use_pymeshlab, args.hhi, args.n_faces, args.add_floor_pc)
         
     return test_res, pre_time, frame_training_time
 
@@ -388,7 +387,7 @@ def prepare_per_frame_logger(args):
         os.makedirs(args.output_path, exist_ok = True)
         tb_writer = SummaryWriter(args.output_path)
     else:
-        print("Not logging progress")
+        print("No tensorboard logging")
     return tb_writer
 
 def prepare_global_logger(output_global_path, args):   
@@ -398,7 +397,7 @@ def prepare_global_logger(output_global_path, args):
         os.makedirs(output_global_path, exist_ok = True)
         tb_writer = SummaryWriter(output_global_path)
     else:
-        print("Not logging progress")
+        print("No tensorboard logging")
     return tb_writer
 
 def training_report(tb_writer, iteration, loss_dict, l1_loss, elapsed, testing_iterations, scene : Scene, pipe, bg, use_mask):
@@ -494,76 +493,83 @@ def train_frames(lp, op, pp, args):
         
 
 if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Training script parameters")
-    lp = ModelParams(parser)
-    op = OptimizationParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument('--frame_start', type=int, default=1)
-    parser.add_argument('--frame_end', type=int, default=150)
-    parser.add_argument('--debug_from', type=int, default=-1)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
-    parser.add_argument('--load_iteration', type=int, default=-1)
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--start_checkpoint", type=str, default = None)
-    parser.add_argument("--config_path", type=str, default = None)
-    parser.add_argument("--optical_flow_normals", type=str, default=True)
-    parser.add_argument('--l_coh', type=float, default=1.0)
-    parser.add_argument("--save_snapshot", action="store_true") 
-    args = parser.parse_args(sys.argv[1:])
+    try:        
+        # Set up command line argument parser
+        parser = ArgumentParser(description="Training script parameters")
+        lp = ModelParams(parser)
+        op = OptimizationParams(parser)
+        pp = PipelineParams(parser)
+        parser.add_argument('--frame_start', type=int, default=1, help="Start frame index (inclusive).")
+        parser.add_argument('--frame_end', type=int, default=150, help="End frame index (exclusive).")
+        parser.add_argument('--debug_from', type=int, default=-1)
+        parser.add_argument("--test_iterations", nargs="+", type=int, default=[])
+        parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
+        parser.add_argument('--load_iteration', type=int, default=-1)
+        parser.add_argument("--quiet", action="store_true")
+        parser.add_argument("--start_checkpoint", type=str, default = None)
+        parser.add_argument("--config_path", type=str, default = None)
+        parser.add_argument("--optical_flow_normals", type=str, default=True)
+        parser.add_argument('--l_coh', type=float, default=1.0)
+        parser.add_argument("--save_snapshot", action="store_true") 
+        parser.add_argument("--poisson_depth", type=int, default=9)
+        args = parser.parse_args(sys.argv[1:])
 
-    if args.config_path is not None:
-        with open(args.config_path, 'r') as f:
-            config = json5.load(f)
-        for key, value in config.items():
-            setattr(args, key, value)
-    args.optical_flow_normals = str2bool(args.optical_flow_normals)
-    args.mono_normal = str2bool(args.mono_normal)
-    args.output_mesh = str2bool(args.output_mesh)
-    args.hhi = str2bool(args.hhi)
-    args.add_floor_pc = str2bool(args.add_floor_pc)
-    args.eval = str2bool(args.eval)
-    assert config["frame_end"] == args.frame_end
+        if args.config_path is not None:
+            with open(args.config_path, 'r') as f:
+                config = json5.load(f)
+            for key, value in config.items():
+                setattr(args, key, value)
+        args.optical_flow_normals = str2bool(args.optical_flow_normals)
+        args.mono_normal = str2bool(args.mono_normal)
+        args.output_mesh = str2bool(args.output_mesh)
+        args.hhi = str2bool(args.hhi)
+        args.add_floor_pc = str2bool(args.add_floor_pc)
+        args.eval = str2bool(args.eval)
+            
+        # resume training
+        frame_done = get_max_subfolder_numbers_in_range(config["output_path"], args.frame_start, args.frame_end-1)
+        if frame_done:
+            # if (frame_done == config["frame_end"] - 1): exit()
+            args.frame_start = max(frame_done -1, args.frame_start)
+
+        # set other parameters:
+        if args.output_global_path == '':
+            args.output_global_path = args.output_path.replace('output', 'output_global').replace('recon_mesh', 'recon_mesh_global')
+        if len(args.test_iterations) == 0:
+            # iterations are 1-based
+            # args.test_iterations = [1, args.iter_s1//3, args.iter_s1//3*2, args.iter_s1, args.iter_s1 + args.iter_s2//3, args.iter_s1 + args.iter_s2//3*2, args.iter_s1 + args.iter_s2]
+            args.test_iterations = [1, args.iter_s1, args.iter_s1 + args.iter_s2]
+        if len(args.save_iterations) == 0:
+            # args.save_iterations = [args.iter_s1, args.iter_s1 + args.iter_s2]
+            args.save_iterations = [args.iter_s1 + args.iter_s2]
+            
+        # lr
+        args.position_lr_max_steps = args.iter_s2   
+        args.position_lr_init *= args.lr_scale
+        args.position_lr_final *= args.lr_scale
+        args.feature_lr *= args.lr_scale
+        args.opacity_lr *= args.lr_scale
+        args.scaling_lr *= args.lr_scale
+        args.rotation_lr *= args.lr_scale
+
+        # densify
+        args.densify_from_iter = 30
+        args.densify_until_iter = int(args.iter_s2 / 2)
+        args.densification_interval = 30 # opt.densification_interval = max(opt.densification_interval, len(scene.getTrainCameras()))
+        args.opacity_reset_interval = int(args.iter_s2 / 3.9) 
+
+        args.normals_rendered = False
+        args.normals = {}
+        args.rgb_chw = {}
+        args.warped_normals = {}
+        args.flow_bwd = {}
+
+        train_frames(lp,op,pp,args)
+        print("\nTraining completes.")
     
-    # resume training
-    frame_done = get_max_subfolder_numbers_in_range(config["output_path"], args.frame_start, args.frame_end-1)
-    if frame_done:
-        # if (frame_done == config["frame_end"] - 1): exit()
-        args.frame_start = max(frame_done -1, args.frame_start)
-
-    # set other parameters:
-    if args.output_global_path == '':
-        args.output_global_path = args.output_path.replace('output', 'output_global').replace('recon_mesh', 'recon_mesh_global')
-    if len(args.test_iterations) == 0:
-        # iterations are 1-based
-        # args.test_iterations = [1, args.iter_s1//3, args.iter_s1//3*2, args.iter_s1, args.iter_s1 + args.iter_s2//3, args.iter_s1 + args.iter_s2//3*2, args.iter_s1 + args.iter_s2]
-        args.test_iterations = [1, args.iter_s1, args.iter_s1 + args.iter_s2]
-    if len(args.save_iterations) == 0:
-        # args.save_iterations = [args.iter_s1, args.iter_s1 + args.iter_s2]
-        args.save_iterations = [args.iter_s1 + args.iter_s2]
-        
-    # lr
-    args.position_lr_max_steps = args.iter_s2   
-    args.position_lr_init *= args.lr_scale
-    args.position_lr_final *= args.lr_scale
-    args.feature_lr *= args.lr_scale
-    args.opacity_lr *= args.lr_scale
-    args.scaling_lr *= args.lr_scale
-    args.rotation_lr *= args.lr_scale
-
-    # densify
-    args.densify_from_iter = 30
-    args.densify_until_iter = int(args.iter_s2 / 2)
-    args.densification_interval = 30 # opt.densification_interval = max(opt.densification_interval, len(scene.getTrainCameras()))
-    args.opacity_reset_interval = int(args.iter_s2 / 3.9) 
-
-    args.normals_rendered = False
-    args.normals = {}
-    args.rgb_chw = {}
-    args.warped_normals = {}
-    args.flow_bwd = {}
-
-    os.makedirs(args.output_global_path, exist_ok = True)
-    train_frames(lp,op,pp,args)
-    print("\nTraining complete.")
+    except Exception as e:
+        print(f"Error encountered: {e}.")
+        sys.exit(1)
+    else:
+        print("\nExit Training.")
+        sys.exit(0)

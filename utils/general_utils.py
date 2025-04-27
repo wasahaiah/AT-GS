@@ -356,7 +356,17 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
         ms = pymeshlab.MeshSet()
         pts = pymeshlab.Mesh(vtx_np, [], normal_np)
         ms.add_mesh(pts)      
-        ms.generate_surface_reconstruction_screened_poisson(depth=depth, threads=os.cpu_count() // 2, preclean=True, samplespernode=15)
+        if depth <= 9:
+            ms.generate_surface_reconstruction_screened_poisson(depth=depth, threads=os.cpu_count() // 2, preclean=True, samplespernode=15)
+        else:
+            ms.generate_surface_reconstruction_screened_poisson(
+                depth=depth,         # Increase resolution for fine details
+                scale=1.0,        # Slightly reduce scale to limit swelling
+                samplespernode=1.5,
+                preclean=False,
+                threads=os.cpu_count() // 2
+            )
+
         if n_faces: ms.meshing_decimation_quadric_edge_collapse(targetfacenum = n_faces)
         
         # remove connected components having diameter less than p% of the diameter of the entire mesh

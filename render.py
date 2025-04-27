@@ -61,6 +61,28 @@ def render_set(model_path, use_mask, name, iteration, views, gaussians, pipeline
             pts = pts[grid_mask]
             resampled.append(pts.cpu())
 
+            if False:
+                view_name = view.image_name.zfill(4)
+                # output depth map as numpy array
+                depth_dir = os.path.join(model_path, "depths")
+                makedirs(depth_dir, exist_ok=True)
+                depth_out = depth.permute([1, 2, 0]).cpu().numpy().astype(np.float32)
+                np.save(os.path.join(depth_dir, view_name + ".npy"), depth_out)
+                #output mask as png
+                mask_dir = os.path.join(model_path, "masks")
+                makedirs(mask_dir, exist_ok=True)
+                mask_out = mask_vis * mask_gt * mask_clip
+                mask_out = mask_out.permute([1, 2, 0]).cpu().numpy().astype(np.float32)
+                mask_path = os.path.join(mask_dir, view_name + ".png")
+                mask_out = (mask_out * 255).astype(np.uint8)
+                mask_out = np.clip(mask_out, 0, 255)
+                mask_out = np.squeeze(mask_out)
+                mask_out = np.expand_dims(mask_out, axis=2)
+                mask_out = np.repeat(mask_out, 3, axis=2)
+                import cv2
+                cv2.imwrite(mask_path, mask_out)
+
+
         if write_image:
             render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
             gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
