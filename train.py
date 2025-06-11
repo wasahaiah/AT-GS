@@ -148,7 +148,7 @@ def training_one_frame(dataset, opt, pipe, load_iteration, testing_iterations, s
         loss_dict["loss_rgb"] = loss_rgb
 
         bce_loss_func = torch.nn.BCELoss()
-        loss_mask = bce_loss_func(opac, mask_gt) * 0.1 # 0.01
+        loss_mask = bce_loss_func(opac, mask_gt) * opt.lambda_mask
         loss_dict["loss_mask"] = loss_mask
               
         loss = 1 * loss_rgb
@@ -473,14 +473,27 @@ def train_frames(lp, op, pp, args):
         if pattern.match(frame_dir):
             dict_frame_dirs[int(pattern.match(frame_dir).group(1))] = frame_dir
             
-    print(f"Training from frame {args.frame_start}", f" to frame {args.frame_end-1}")
+    print(f"Dynamic training from frame {args.frame_start+1} to frame {args.frame_end-1}")
     for frame_id in range(args.frame_start+1, args.frame_end):
-        print(f"Training frame {frame_id}")
         args.frame_id = frame_id
         start_time = time.time()
         args.source_path = os.path.join(source_path, dict_frame_dirs[frame_id]) # per-frame
         args.output_path = os.path.join(output_path, dict_frame_dirs[frame_id]) # per-frame
         args.model_path = os.path.join(output_path, dict_frame_dirs[frame_id-1]) # per-frame
+        
+        if not args.overwrite_output:
+            # if output mesh (.ply or .obj) exists, skip training this frame
+            if args.output_mesh \
+                and (os.path.exists(os.path.join(args.output_path, "..", "meshes", f"Frame_{frame_id:06d}.ply")) \
+                     or os.path.exists(os.path.join(args.output_path, "..", "meshes", f"Frame_{frame_id:06d}.obj"))):
+                print(f"Output mesh already exists for frame {frame_id}, skipping training this frame.")
+                continue
+            # if not output mesh, and the output point_cloud.ply exists, skip training this frame
+            elif (not args.output_mesh) and os.path.exists(os.path.join(args.output_path, f"point_cloud/iteration_{args.iter_s1 + args.iter_s2}", "point_cloud.ply")):
+                print(f"Output Gaussians already exists for frame {frame_id}, skipping training this frame.")
+                continue
+
+        print(f"Training frame {frame_id}")
         res_dict = train_one_frame(lp,op,pp,args)
         print(f"Frame {frame_id} finished in {time.time()-start_time} seconds.")
         if tb_global:
@@ -522,15 +535,16 @@ if __name__ == "__main__":
         args.optical_flow_normals = str2bool(args.optical_flow_normals)
         args.mono_normal = str2bool(args.mono_normal)
         args.output_mesh = str2bool(args.output_mesh)
+        args.overwrite_output = str2bool(args.overwrite_output)
         args.hhi = str2bool(args.hhi)
         args.add_floor_pc = str2bool(args.add_floor_pc)
         args.eval = str2bool(args.eval)
             
-        # resume training
-        frame_done = get_max_subfolder_numbers_in_range(config["output_path"], args.frame_start, args.frame_end-1)
-        if frame_done:
-            # if (frame_done == config["frame_end"] - 1): exit()
-            args.frame_start = max(frame_done -1, args.frame_start)
+        # # resume training
+        # frame_done = get_max_subfolder_numbers_in_range(config["output_path"], args.frame_start, args.frame_end-1)
+        # if frame_done:
+        #     # if (frame_done == config["frame_end"] - 1): exit()
+        #     args.frame_start = max(frame_done -1, args.frame_start) # frame_done -1 becaues frame_start is for static training, and the dynamic training starts from frame_start+1
 
         # set other parameters:
         if args.output_global_path == '':

@@ -100,7 +100,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss_opac = (loss_opac * opac_mask).mean()
 
         loss = 1 * loss_rgb
-        loss += 0.1 * loss_mask
+        loss += loss_mask * opt.lambda_mask
         loss += 0.01 * loss_opac
         loss += (0.01 + 0.1 * min(2 * iteration / opt.iterations, 1)) * loss_surface   
 
@@ -288,6 +288,7 @@ if __name__ == "__main__":
             setattr(args, key, value)
     args.mono_normal = str2bool(args.mono_normal)
     args.output_mesh = str2bool(args.output_mesh)
+    args.overwrite_output = str2bool(args.overwrite_output)
     args.hhi = str2bool(args.hhi)
     args.add_floor_pc = str2bool(args.add_floor_pc)
 
@@ -295,6 +296,19 @@ if __name__ == "__main__":
     args.source_path = os.path.join(args.source_path, f'frame_{args.frame_start}')
     args.output_path = os.path.join(args.output_path, os.path.basename(args.source_path))
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    
+    if not args.overwrite_output:
+        # if output mesh (.ply or .obj) exists, skip static training
+        if args.output_mesh \
+            and (os.path.exists(os.path.join(args.output_path, "..", "meshes", f"Frame_{args.frame_start:06d}.ply")) \
+                    or os.path.exists(os.path.join(args.output_path, "..", "meshes", f"Frame_{args.frame_start:06d}.obj"))):
+            print(f"Output mesh already exists for frame {args.frame_start}, skipping static training.")
+            exit(0)
+        # if not output mesh, and the output point_cloud.ply exists, skip static training
+        elif (not args.output_mesh) and os.path.exists(os.path.join(args.output_path, f"point_cloud/iteration_{args.iterations}", "point_cloud.ply")):
+            print(f"Output Gaussians already exists for frame {args.frame_start}, skipping static training.")
+            exit(0)
+    
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
     
     print("\nTraining complete.")

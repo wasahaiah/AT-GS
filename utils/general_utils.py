@@ -342,32 +342,31 @@ def poisson_mesh(mesh_path, vtx, normal, color, depth, use_pymeshlab, hhi=False,
                 vtx_np = np.vstack((vtx_np, floor_points_3d))
                 normal_np = np.vstack((normal_np, floor_normals))
                 
-                # # save the pcd to ply files
-                # pcd = o3d.geometry.PointCloud()
-                # pcd.points = o3d.utility.Vector3dVector(vtx_np.astype(np.float64))
-                # pcd.normals = o3d.utility.Vector3dVector(normal_np.astype(np.float64))
-                # pcd_path = mesh_path.replace('.obj', '_filtered.ply')
-                # o3d.io.write_point_cloud(pcd_path, pcd)
-                # pcd.points = o3d.utility.Vector3dVector(floor_points_3d.astype(np.float64))
-                # pcd.normals = o3d.utility.Vector3dVector(floor_normals.astype(np.float64))
-                # pcd_path = mesh_path.replace('.obj', '_floor.ply')
-                # o3d.io.write_point_cloud(pcd_path, pcd)
+                # save the pcd to ply files
+                if False:
+                    pcd = o3d.geometry.PointCloud()
+                    pcd.points = o3d.utility.Vector3dVector(vtx_np.astype(np.float64))
+                    pcd.normals = o3d.utility.Vector3dVector(normal_np.astype(np.float64))
+                    pcd_path = mesh_path.replace('.obj', '_filtered.ply')
+                    o3d.io.write_point_cloud(pcd_path, pcd)
+                    pcd.points = o3d.utility.Vector3dVector(floor_points_3d.astype(np.float64))
+                    pcd.normals = o3d.utility.Vector3dVector(floor_normals.astype(np.float64))
+                    pcd_path = mesh_path.replace('.obj', '_floor.ply')
+                    o3d.io.write_point_cloud(pcd_path, pcd)
 
         ms = pymeshlab.MeshSet()
         pts = pymeshlab.Mesh(vtx_np, [], normal_np)
         ms.add_mesh(pts)      
-        if depth <= 9:
-            ms.generate_surface_reconstruction_screened_poisson(depth=depth, threads=os.cpu_count() // 2, preclean=True, samplespernode=15)
-        else:
-            ms.generate_surface_reconstruction_screened_poisson(
-                depth=depth,         # Increase resolution for fine details
-                scale=1.0,        # Slightly reduce scale to limit swelling
-                samplespernode=1.5,
-                preclean=False,
-                threads=os.cpu_count() // 2
-            )
+        ms.generate_surface_reconstruction_screened_poisson(
+            depth=depth,        
+            scale=1.0,  #default=1.1    # Slightly reduce scale to limit swelling
+            samplespernode=1.5, #15, #default=1.5
+            threads=os.cpu_count() // 2
+        )
 
         if n_faces: ms.meshing_decimation_quadric_edge_collapse(targetfacenum = n_faces)
+        
+        # ms.apply_coord_taubin_smoothing()
         
         # remove connected components having diameter less than p% of the diameter of the entire mesh
         p = pymeshlab.PercentageValue(30)

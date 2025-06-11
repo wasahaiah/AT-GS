@@ -83,6 +83,7 @@ class PipelineParams(ParamGroup):
         self.debug = False
 
         self.output_mesh = False
+        self.overwrite_output = False
         self.use_pymeshlab = False
         self.hhi = False
         self.add_floor_pc = False
@@ -120,6 +121,7 @@ class OptimizationParams(ParamGroup):
         self.only_mlp = False
 
         self.lambda_smooth = 0
+        self.lambda_mask = 0.01 #0.1
         
         super().__init__(parser, "Optimization Parameters")
 
